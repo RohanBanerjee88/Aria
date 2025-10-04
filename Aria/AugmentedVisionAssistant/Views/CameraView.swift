@@ -4,6 +4,7 @@
 //
 //  Created by Rohan Banerjee on 10/4/25.
 //
+
 import SwiftUI
 import AVFoundation
 
@@ -32,7 +33,12 @@ struct CameraPreview: UIViewRepresentable {
 // Main Camera View
 struct CameraView: View {
     @StateObject private var cameraService = CameraService()
+    @StateObject private var gestureService = GestureService()
     @State private var isProcessing = false
+    @State private var currentMode: AppMode = .idle
+    @State private var isModeLocked = false  // NEW: Lock mode once activated
+    @State private var gestureTimer: Timer?
+    @State private var speechSynthesizer = AVSpeechSynthesizer()
     
     var body: some View {
         ZStack {
@@ -43,9 +49,11 @@ struct CameraView: View {
                     .onAppear {
                         print("🎥 Starting camera session...")
                         cameraService.startSession()
+                        startGestureDetection()
                     }
                     .onDisappear {
                         cameraService.stopSession()
+                        stopGestureDetection()
                     }
             } else {
                 // Permission denied state
@@ -86,12 +94,19 @@ struct CameraView: View {
                     
                     Spacer()
                     
-                    Text("Environment Mode")
-                        .font(.caption)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(.ultraThinMaterial)
-                        .cornerRadius(8)
+                    VStack(alignment: .trailing, spacing: 4) {
+                        Text(currentMode.displayName)
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                        
+                        Text("Gesture: \(gestureService.currentGesture.description)")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(.ultraThinMaterial)
+                    .cornerRadius(8)
                 }
                 .padding()
                 .background(.ultraThinMaterial)
@@ -100,30 +115,57 @@ struct CameraView: View {
                 
                 // Bottom control panel
                 VStack(spacing: 16) {
-                    Text("Tap to analyze scene")
+                    Text(getInstructionText())
                         .font(.headline)
                         .foregroundColor(.white)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
                     
+                    // Manual trigger button (optional backup)
                     Button(action: {
                         captureAndAnalyze()
                     }) {
-                        Circle()
-                            .fill(Color.white)
-                            .frame(width: 80, height: 80)
-                            .overlay(
-                                Circle()
-                                    .stroke(Color.white, lineWidth: 4)
-                                    .frame(width: 90, height: 90)
-                            )
+                        VStack(spacing: 8) {
+                            Circle()
+                                .fill(currentMode == .idle ? Color.gray : Color.white)
+                                .frame(width: 70, height: 70)
+                                .overlay(
+                                    Image(systemName: isProcessing ? "hourglass" : "camera.fill")
+                                        .font(.system(size: 30))
+                                        .foregroundColor(currentMode == .idle ? .white : .black)
+                                )
+                            
+                            Text("Manual Capture")
+                                .font(.caption2)
+                                .foregroundColor(.white.opacity(0.7))
+                        }
                     }
-                    .disabled(isProcessing)
+                    .disabled(isProcessing || currentMode == .idle)
                     
-                    Text("Later: Use gestures to control")
-                        .font(.caption)
-                        .foregroundColor(.white.opacity(0.7))
+                    VStack(spacing: 4) {
+                        Text("✋ Open Palm = Navigate (Auto)")
+                            .font(.caption)
+                        Text("✌️ Peace Sign = Read Text (Auto)")
+                            .font(.caption)
+                        Text("✊ Fist = Stop")
+                            .font(.caption)
+                    }
+                    .foregroundColor(.white.opacity(0.7))
                 }
                 .padding(.bottom, 40)
             }
+        }
+    }
+    
+    // MARK: - UI Helpers
+    private func getInstructionText() -> String {
+        switch currentMode {
+        case .idle:
+            return "Show a hand gesture to choose a mode:\n✋ Open Palm = Navigate\n✌️ Peace Sign = Read Text\n✊ Fist = Stop"
+        default:
+            return isProcessing
+                ? "Analyzing... hold steady."
+                : "Hold steady. Auto-capturing when ready."
         }
     }
     
@@ -144,7 +186,7 @@ struct CameraView: View {
         Task {
             do {
                 let geminiService = GeminiService()
-                let analysis = try await geminiService.analyzeImage(frame)
+                let analysis = try await geminiService.analyzeImage(frame, mode: <#AppMode#>)
                 
                 // Print result (we'll add speech next!)
                 print("🎯 ANALYSIS: \(analysis)")
@@ -168,15 +210,79 @@ struct CameraView: View {
     
     // MARK: - Text to Speech
     private func speakText(_ text: String) {
+        // Stop any current speech
+        if speechSynthesizer.isSpeaking {
+            speechSynthesizer.stopSpeaking(at: .immediate)
+        }
+        
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
         utterance.rate = 0.5 // Slower speech for clarity
         utterance.volume = 1.0
-        
-        let synthesizer = AVSpeechSynthesizer()
-        synthesizer.speak(utterance)
+        utterance.pitchMultiplier = 1.0
+        utterance.preUtteranceDelay = 0.1
         
         print("🔊 Speaking: \(text)")
+        speechSynthesizer.speak(utterance)
+    }
+    
+    // MARK: - Gesture Detection
+    private func startGestureDetection() {
+        // Run gesture detection every 0.5 seconds
+        gestureTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
+            detectGesture()
+        }
+    }
+    
+    private func stopGestureDetection() {
+        gestureTimer?.invalidate()
+        gestureTimer = nil
+    }
+    
+    private func detectGesture() {
+        guard let frame = cameraService.captureCurrentFrame() else { return }
+        
+        gestureService.analyzeGesture(from: frame)
+        
+        // Update mode if gesture changed
+        if gestureService.detectedMode != currentMode {
+            let newMode = gestureService.detectedMode
+            let previousMode = currentMode
+            currentMode = newMode
+            
+            // Announce mode change and auto-trigger analysis
+            if newMode != .idle {
+                speakText("\(newMode.displayName) activated")
+                
+                // Add haptic feedback
+                let generator = UIImpactFeedbackGenerator(style: .medium)
+                generator.impactOccurred()
+                
+                // Auto-trigger analysis after a short delay (let user stabilize hand)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    if self.currentMode == newMode && !self.isProcessing {
+                        self.captureAndAnalyze()
+                    }
+                }
+            } else if previousMode != .idle {
+                // Switched to idle (fist gesture)
+                speakText("Stopped")
+                let generator = UIImpactFeedbackGenerator(style: .light)
+                generator.impactOccurred()
+            }
+        }
+    }
+}
+
+// MARK: - Gesture Type Description Extension
+extension GestureType {
+    var description: String {
+        switch self {
+        case .openPalm: return "Open Palm ✋"
+        case .peaceSign: return "Peace Sign ✌️"
+        case .fist: return "Fist ✊"
+        case .unknown: return "None"
+        }
     }
 }
 

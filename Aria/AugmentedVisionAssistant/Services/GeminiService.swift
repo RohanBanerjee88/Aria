@@ -11,7 +11,18 @@ import UIKit
 class GeminiService {
     
     // MARK: - Analyze Image with Gemini Vision
-    func analyzeImage(_ image: UIImage) async throws -> String {
+    func analyzeImage(_ image: UIImage, mode: AppMode) async throws -> String {
+        // Select appropriate prompt based on mode
+        let prompt: String
+        switch mode {
+        case .environment:
+            prompt = Constants.visionPrompt
+        case .communication:
+            prompt = Constants.textReadingPrompt
+        case .idle:
+            prompt = Constants.visionPrompt // fallback
+        }
+        
         // Convert image to base64
         guard let imageData = image.jpegData(compressionQuality: 0.8) else {
             throw GeminiError.imageConversionFailed
@@ -25,7 +36,7 @@ class GeminiService {
                 [
                     "parts": [
                         [
-                            "text": Constants.visionPrompt
+                            "text": prompt
                         ],
                         [
                             "inline_data": [
@@ -40,7 +51,7 @@ class GeminiService {
                 "temperature": 0.4,
                 "topK": 32,
                 "topP": 1,
-                "maxOutputTokens": 150
+                "maxOutputTokens": mode == .communication ? 500 : 150  // More tokens for text reading
             ]
         ]
         
@@ -63,7 +74,7 @@ class GeminiService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
         
-        print("📤 Sending request to Gemini...")
+        print("📤 Sending \(mode.displayName) request to Gemini...")
         
         // Make API call
         let (data, response) = try await URLSession.shared.data(for: request)
