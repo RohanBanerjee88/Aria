@@ -7,6 +7,7 @@
 
 import SwiftUI
 import AVFoundation
+import UIKit
 
 // UIKit wrapper for camera preview
 struct CameraPreview: UIViewRepresentable {
@@ -34,11 +35,11 @@ struct CameraPreview: UIViewRepresentable {
 struct CameraView: View {
     @StateObject private var cameraService = CameraService()
     @StateObject private var gestureService = GestureService()
+    @StateObject private var audioService = AudioService()  // NEW: Smart audio manager
     @State private var isProcessing = false
     @State private var currentMode: AppMode = .idle
-    @State private var isModeLocked = false  // NEW: Lock mode once activated
+    @State private var isModeLocked = false
     @State private var gestureTimer: Timer?
-    @State private var speechSynthesizer = AVSpeechSynthesizer()
     
     var body: some View {
         ZStack {
@@ -95,11 +96,18 @@ struct CameraView: View {
                     Spacer()
                     
                     VStack(alignment: .trailing, spacing: 4) {
-                        Text(currentMode.displayName)
-                            .font(.caption)
-                            .fontWeight(.semibold)
+                        HStack(spacing: 4) {
+                            if isModeLocked {
+                                Image(systemName: "lock.fill")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.green)
+                            }
+                            Text(currentMode.displayName)
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                        }
                         
-                        Text("Gesture: \(gestureService.currentGesture.description)")
+                        Text(isModeLocked ? "Locked - Fist to unlock" : "Gesture: \(gestureService.currentGesture.description)")
                             .font(.system(size: 10))
                             .foregroundColor(.secondary)
                     }
@@ -143,12 +151,13 @@ struct CameraView: View {
                     .disabled(isProcessing || currentMode == .idle)
                     
                     VStack(spacing: 4) {
-                        Text("✋ Open Palm = Navigate (Auto)")
+                        Text("✋ Open Palm = Navigate (Locks)")
                             .font(.caption)
-                        Text("✌️ Peace Sign = Read Text (Auto)")
+                        Text("✌️ Peace Sign = Read Text (Locks)")
                             .font(.caption)
-                        Text("✊ Fist = Stop")
+                        Text("✊ Fist = Stop & Unlock")
                             .font(.caption)
+                            .fontWeight(.semibold)
                     }
                     .foregroundColor(.white.opacity(0.7))
                 }
@@ -157,16 +166,29 @@ struct CameraView: View {
         }
     }
     
-    // MARK: - UI Helpers
+    // MARK: - Instruction Text
     private func getInstructionText() -> String {
-        switch currentMode {
-        case .idle:
-            return "Show a hand gesture to choose a mode:\n✋ Open Palm = Navigate\n✌️ Peace Sign = Read Text\n✊ Fist = Stop"
-        default:
-            return isProcessing
-                ? "Analyzing... hold steady."
-                : "Hold steady. Auto-capturing when ready."
+        if !cameraService.isAuthorized {
+            return "Camera access is required. Tap Open Settings to enable camera access."
         }
+        
+        if isProcessing {
+            if currentMode == .idle {
+                return "Processing..."
+            } else {
+                return "Analyzing \(currentMode.displayName.lowercased())..."
+            }
+        }
+        
+        if currentMode == .idle {
+            return "Show an open palm to navigate or a peace sign to read text. Make a fist to stop."
+        }
+        
+        if isModeLocked {
+            return "\(currentMode.displayName) mode locked. Make a fist to stop and unlock."
+        }
+        
+        return "Ready for \(currentMode.displayName). Make a fist to stop."
     }
     
     // MARK: - Actions
@@ -186,7 +208,7 @@ struct CameraView: View {
         Task {
             do {
                 let geminiService = GeminiService()
-                let analysis = try await geminiService.analyzeImage(frame, mode: <#AppMode#>)
+                let analysis = try await geminiService.analyzeImage(frame, mode: currentMode)
                 
                 // Print result (we'll add speech next!)
                 print("🎯 ANALYSIS: \(analysis)")
@@ -209,21 +231,9 @@ struct CameraView: View {
     }
     
     // MARK: - Text to Speech
-    private func speakText(_ text: String) {
-        // Stop any current speech
-        if speechSynthesizer.isSpeaking {
-            speechSynthesizer.stopSpeaking(at: .immediate)
-        }
-        
-        let utterance = AVSpeechUtterance(string: text)
-        utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
-        utterance.rate = 0.5 // Slower speech for clarity
-        utterance.volume = 1.0
-        utterance.pitchMultiplier = 1.0
-        utterance.preUtteranceDelay = 0.1
-        
-        print("🔊 Speaking: \(text)")
-        speechSynthesizer.speak(utterance)
+    private func speakText(_ text: String, usePremiumVoice: Bool = true) {
+        // Always uses ElevenLabs now!
+        audioService.speak(text, usePremiumVoice: usePremiumVoice)
     }
     
     // MARK: - Gesture Detection
@@ -244,31 +254,42 @@ struct CameraView: View {
         
         gestureService.analyzeGesture(from: frame)
         
-        // Update mode if gesture changed
-        if gestureService.detectedMode != currentMode {
-            let newMode = gestureService.detectedMode
-            let previousMode = currentMode
-            currentMode = newMode
-            
-            // Announce mode change and auto-trigger analysis
-            if newMode != .idle {
-                speakText("\(newMode.displayName) activated")
+        let detectedGesture = gestureService.currentGesture
+        let detectedMode = gestureService.detectedMode
+        
+        // FIST GESTURE: Always unlock and reset to idle
+        if detectedGesture == .fist {
+            if currentMode != .idle || isModeLocked {
+                currentMode = .idle
+                isModeLocked = false
+                speakText("Stopped", usePremiumVoice: false)  // Use Apple for quick feedback
                 
-                // Add haptic feedback
-                let generator = UIImpactFeedbackGenerator(style: .medium)
-                generator.impactOccurred()
-                
-                // Auto-trigger analysis after a short delay (let user stabilize hand)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                    if self.currentMode == newMode && !self.isProcessing {
-                        self.captureAndAnalyze()
-                    }
-                }
-            } else if previousMode != .idle {
-                // Switched to idle (fist gesture)
-                speakText("Stopped")
                 let generator = UIImpactFeedbackGenerator(style: .light)
                 generator.impactOccurred()
+            }
+            return
+        }
+        
+        // If mode is locked, ignore other gestures
+        if isModeLocked {
+            return
+        }
+        
+        // ACTIVATE NEW MODE: Only if currently idle and non-fist gesture detected
+        if currentMode == .idle && detectedMode != .idle && detectedGesture != .unknown {
+            currentMode = detectedMode
+            isModeLocked = true  // Lock the mode
+            
+            speakText("\(detectedMode.displayName) activated and locked", usePremiumVoice: false)  // Apple for mode changes
+            
+            let generator = UIImpactFeedbackGenerator(style: .medium)
+            generator.impactOccurred()
+            
+            // Auto-trigger analysis after mode locks
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                if self.currentMode == detectedMode && self.isModeLocked && !self.isProcessing {
+                    self.captureAndAnalyze()
+                }
             }
         }
     }

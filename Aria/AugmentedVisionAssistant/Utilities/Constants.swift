@@ -4,14 +4,21 @@
 //
 //  Created by Rohan Banerjee on 10/4/25.
 //
+//
+
 import Foundation
 
 struct Constants {
-    // REPLACE WITH YOUR ACTUAL API KEY
-    static let geminiAPIKey = "hello"
+    // REPLACE WITH YOUR ACTUAL API KEYS
+    static let geminiAPIKey = "key key key "
+    static let elevenLabsAPIKey = "hahahah" 
     
-    // Gemini API Endpoint
+    // API Endpoints
     static let geminiEndpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent"
+    static let elevenLabsEndpoint = "https://api.elevenlabs.io/v1/text-to-speech"  // NEW
+    
+    // ElevenLabs Voice ID (Rachel - clear, professional female voice)
+    static let elevenLabsVoiceID = "21m00Tcm4TlvDq8ikWAM"  // Rachel voice
     
     // System prompt for vision analysis (Environment Mode)
     static let visionPrompt = """
