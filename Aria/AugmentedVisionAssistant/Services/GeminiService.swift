@@ -19,6 +19,8 @@ class GeminiService {
             prompt = Constants.visionPrompt
         case .communication:
             prompt = Constants.textReadingPrompt
+        case .navigation:
+            prompt = Constants.visionPrompt  // Use environment prompt for obstacle detection during navigation
         case .idle:
             prompt = Constants.visionPrompt // fallback
         }

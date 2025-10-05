@@ -14,12 +14,14 @@ import Combine
 enum AppMode {
     case environment  // Navigation and obstacle detection
     case communication // Translation and reading text
+    case navigation   // Turn-by-turn directions
     case idle         // No active mode
     
     var displayName: String {
         switch self {
         case .environment: return "Environment Mode"
         case .communication: return "Communication Mode"
+        case .navigation: return "Navigation Mode"
         case .idle: return "Idle"
         }
     }
@@ -176,4 +178,3 @@ class GestureService: ObservableObject {
         return sqrt(dx * dx + dy * dy)
     }
 }
-

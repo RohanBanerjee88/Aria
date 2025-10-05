@@ -7,7 +7,6 @@
 
 import SwiftUI
 import AVFoundation
-import UIKit
 
 // UIKit wrapper for camera preview
 struct CameraPreview: UIViewRepresentable {
@@ -35,11 +34,14 @@ struct CameraPreview: UIViewRepresentable {
 struct CameraView: View {
     @StateObject private var cameraService = CameraService()
     @StateObject private var gestureService = GestureService()
-    @StateObject private var audioService = AudioService()  // NEW: Smart audio manager
+    @StateObject private var audioService = AudioService()
+    @StateObject private var navigationService = NavigationService()
     @State private var isProcessing = false
     @State private var currentMode: AppMode = .idle
     @State private var isModeLocked = false
     @State private var gestureTimer: Timer?
+    @State private var showNavigationInput = false
+    @State private var navigationDestination = ""
     
     var body: some View {
         ZStack {
@@ -129,26 +131,84 @@ struct CameraView: View {
                         .multilineTextAlignment(.center)
                         .padding(.horizontal)
                     
-                    // Manual trigger button (optional backup)
-                    Button(action: {
-                        captureAndAnalyze()
-                    }) {
-                        VStack(spacing: 8) {
-                            Circle()
-                                .fill(currentMode == .idle ? Color.gray : Color.white)
-                                .frame(width: 70, height: 70)
-                                .overlay(
-                                    Image(systemName: isProcessing ? "hourglass" : "camera.fill")
-                                        .font(.system(size: 30))
-                                        .foregroundColor(currentMode == .idle ? .white : .black)
-                                )
-                            
-                            Text("Manual Capture")
-                                .font(.caption2)
-                                .foregroundColor(.white.opacity(0.7))
+                    HStack(spacing: 20) {
+                        // Manual Capture button (hidden during navigation)
+                        if !navigationService.isNavigating {
+                            Button(action: {
+                                captureAndAnalyze()
+                            }) {
+                                VStack(spacing: 8) {
+                                    Circle()
+                                        .fill(currentMode == .idle ? Color.gray : Color.white)
+                                        .frame(width: 70, height: 70)
+                                        .overlay(
+                                            Image(systemName: isProcessing ? "hourglass" : "camera.fill")
+                                                .font(.system(size: 30))
+                                                .foregroundColor(currentMode == .idle ? .white : .black)
+                                        )
+                                    
+                                    Text("Analyze")
+                                        .font(.caption2)
+                                        .foregroundColor(.white.opacity(0.7))
+                                }
+                            }
+                            .disabled(isProcessing || currentMode == .idle)
+                        }
+                        
+                        // Next Step button (only during navigation)
+                        if navigationService.isNavigating {
+                            Button(action: {
+                                navigationService.nextStep()
+                                if let instruction = navigationService.getCurrentInstruction() {
+                                    speakText(instruction, usePremiumVoice: true)
+                                } else {
+                                    speakText("You have arrived at your destination", usePremiumVoice: true)
+                                }
+                            }) {
+                                VStack(spacing: 8) {
+                                    Circle()
+                                        .fill(Color.green)
+                                        .frame(width: 70, height: 70)
+                                        .overlay(
+                                            Image(systemName: "arrow.right.circle.fill")
+                                                .font(.system(size: 30))
+                                                .foregroundColor(.white)
+                                        )
+                                    
+                                    Text("Next Step")
+                                        .font(.caption2)
+                                        .foregroundColor(.white.opacity(0.7))
+                                }
+                            }
+                        }
+                        
+                        // Navigation button
+                        Button(action: {
+                            if navigationService.isNavigating {
+                                navigationService.stopNavigation()
+                                currentMode = .idle
+                                isModeLocked = false
+                                speakText("Navigation stopped", usePremiumVoice: true)
+                            } else {
+                                showNavigationInput = true
+                            }
+                        }) {
+                            VStack(spacing: 8) {
+                                Circle()
+                                    .fill(navigationService.isNavigating ? Color.red : Color.blue)
+                                    .frame(width: 70, height: 70)
+                                    .overlay(
+                                        Image(systemName: navigationService.isNavigating ? "xmark" : "map.fill")
+                                            .font(.system(size: 30))
+                                            .foregroundColor(.white)
+                                    )
+                                
+                                Text(navigationService.isNavigating ? "Stop" : "Navigate")
+                                    .font(.caption2)
+                                    .foregroundColor(.white.opacity(0.7))
+                            }
                         }
                     }
-                    .disabled(isProcessing || currentMode == .idle)
                     
                     VStack(spacing: 4) {
                         Text("✋ Open Palm = Navigate (Locks)")
@@ -164,35 +224,31 @@ struct CameraView: View {
                 .padding(.bottom, 40)
             }
         }
-    }
-    
-    // MARK: - Instruction Text
-    private func getInstructionText() -> String {
-        if !cameraService.isAuthorized {
-            return "Camera access is required. Tap Open Settings to enable camera access."
+        .sheet(isPresented: $showNavigationInput) {
+            NavigationInputView(
+                navigationService: navigationService,
+                audioService: audioService,
+                isPresented: $showNavigationInput,
+                onNavigationStart: {
+                    currentMode = .navigation
+                    isModeLocked = true
+                }
+            )
         }
-        
-        if isProcessing {
-            if currentMode == .idle {
-                return "Processing..."
-            } else {
-                return "Analyzing \(currentMode.displayName.lowercased())..."
-            }
-        }
-        
-        if currentMode == .idle {
-            return "Show an open palm to navigate or a peace sign to read text. Make a fist to stop."
-        }
-        
-        if isModeLocked {
-            return "\(currentMode.displayName) mode locked. Make a fist to stop and unlock."
-        }
-        
-        return "Ready for \(currentMode.displayName). Make a fist to stop."
     }
     
     // MARK: - Actions
     private func captureAndAnalyze() {
+        guard currentMode != .idle else {
+            speakText("Please show a gesture first", usePremiumVoice: false)
+            return
+        }
+        
+        // Don't analyze in navigation mode (navigation handles its own speech)
+        guard currentMode != .navigation else {
+            return
+        }
+        
         isProcessing = true
         
         // Capture current frame
@@ -204,24 +260,26 @@ struct CameraView: View {
         
         print("✅ Frame captured: \(frame.size)")
         
-        // Analyze with Gemini
+        // Analyze with Gemini based on current mode
+        let modeToUse = currentMode
+        
         Task {
             do {
                 let geminiService = GeminiService()
-                let analysis = try await geminiService.analyzeImage(frame, mode: currentMode)
+                let analysis = try await geminiService.analyzeImage(frame, mode: modeToUse)
                 
-                // Print result (we'll add speech next!)
-                print("🎯 ANALYSIS: \(analysis)")
+                // Print result
+                print("🎯 ANALYSIS (\(modeToUse.displayName)): \(analysis)")
                 
-                // Speak the result
-                speakText(analysis)
+                // Speak with premium voice for analysis results
+                speakText(analysis, usePremiumVoice: true)
                 
                 await MainActor.run {
                     isProcessing = false
                 }
             } catch {
                 print("❌ Gemini error: \(error.localizedDescription)")
-                speakText("Error analyzing scene. Please try again.")
+                speakText("Error analyzing scene. Please try again.", usePremiumVoice: false)
                 
                 await MainActor.run {
                     isProcessing = false
@@ -260,9 +318,16 @@ struct CameraView: View {
         // FIST GESTURE: Always unlock and reset to idle
         if detectedGesture == .fist {
             if currentMode != .idle || isModeLocked {
+                // Stop navigation if active
+                if navigationService.isNavigating {
+                    navigationService.stopNavigation()
+                    speakText("Navigation stopped", usePremiumVoice: true)
+                } else {
+                    speakText("Stopped", usePremiumVoice: false)
+                }
+                
                 currentMode = .idle
                 isModeLocked = false
-                speakText("Stopped", usePremiumVoice: false)  // Use Apple for quick feedback
                 
                 let generator = UIImpactFeedbackGenerator(style: .light)
                 generator.impactOccurred()
@@ -280,7 +345,7 @@ struct CameraView: View {
             currentMode = detectedMode
             isModeLocked = true  // Lock the mode
             
-            speakText("\(detectedMode.displayName) activated and locked", usePremiumVoice: false)  // Apple for mode changes
+            speakText("\(detectedMode.displayName) activated and locked", usePremiumVoice: false)
             
             let generator = UIImpactFeedbackGenerator(style: .medium)
             generator.impactOccurred()
@@ -293,6 +358,31 @@ struct CameraView: View {
             }
         }
     }
+    
+    // MARK: - Helper Methods
+    private func getInstructionText() -> String {
+        if navigationService.isNavigating {
+            if let instruction = navigationService.getCurrentInstruction() {
+                return instruction
+            }
+            return "Navigation active"
+        }
+        
+        if isModeLocked {
+            switch currentMode {
+            case .environment:
+                return "🔒 Environment Mode Locked\nMove freely - Fist to stop"
+            case .communication:
+                return "🔒 Reading Mode Locked\nPoint at text - Fist to stop"
+            case .navigation:
+                return "🔒 Navigation Mode\nFollowing directions"
+            case .idle:
+                return "Show a gesture to start"
+            }
+        } else {
+            return "Show a gesture to start"
+        }
+    }
 }
 
 // MARK: - Gesture Type Description Extension
@@ -303,6 +393,133 @@ extension GestureType {
         case .peaceSign: return "Peace Sign ✌️"
         case .fist: return "Fist ✊"
         case .unknown: return "None"
+        }
+    }
+}
+
+// MARK: - Navigation Input View
+struct NavigationInputView: View {
+    @ObservedObject var navigationService: NavigationService
+    @ObservedObject var audioService: AudioService
+    @Binding var isPresented: Bool
+    var onNavigationStart: () -> Void
+    
+    @State private var destination = ""
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+    
+    // Common destinations
+    let quickDestinations = ["Starbucks", "Subway", "CVS", "7-Eleven", "McDonald's"]
+    
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 20) {
+                Text("Where do you want to go?")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                    .padding(.top)
+                
+                // Text input
+                TextField("Enter destination", text: $destination)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.title3)
+                    .padding(.horizontal)
+                    .autocapitalization(.words)
+                
+                // Quick destinations
+                Text("Quick picks:")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(quickDestinations, id: \.self) { place in
+                            Button(action: {
+                                destination = place
+                            }) {
+                                Text(place)
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 8)
+                                    .background(Color.blue.opacity(0.2))
+                                    .cornerRadius(20)
+                            }
+                        }
+                    }
+                    .padding(.horizontal)
+                }
+                
+                if let error = errorMessage {
+                    Text(error)
+                        .foregroundColor(.red)
+                        .font(.caption)
+                        .padding()
+                }
+                
+                Spacer()
+                
+                // Start navigation button
+                Button(action: {
+                    startNavigation()
+                }) {
+                    HStack {
+                        if isLoading {
+                            ProgressView()
+                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                        } else {
+                            Image(systemName: "location.fill")
+                            Text("Start Navigation")
+                                .fontWeight(.semibold)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(destination.isEmpty ? Color.gray : Color.blue)
+                    .foregroundColor(.white)
+                    .cornerRadius(12)
+                }
+                .disabled(destination.isEmpty || isLoading)
+                .padding(.horizontal)
+                .padding(.bottom, 30)
+            }
+            .navigationTitle("Navigation")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") {
+                        isPresented = false
+                    }
+                }
+            }
+        }
+    }
+    
+    private func startNavigation() {
+        isLoading = true
+        errorMessage = nil
+        
+        Task {
+            do {
+                try await navigationService.startNavigation(to: destination)
+                
+                await MainActor.run {
+                    audioService.speak("Navigation started to \(destination)")
+                    isPresented = false
+                    onNavigationStart()
+                    
+                    // Speak first instruction
+                    if let instruction = navigationService.getCurrentInstruction() {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                            audioService.speak(instruction)
+                        }
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    errorMessage = error.localizedDescription
+                    isLoading = false
+                    audioService.speak("Unable to get directions. \(error.localizedDescription)")
+                }
+            }
         }
     }
 }

@@ -10,9 +10,22 @@
 		366716012E90D3390039D41B /* Aria.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Aria.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		36C5D5C22E92148B00928DCE /* Exceptions for "Aria" folder in "Aria" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 366716002E90D3390039D41B /* Aria */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		366716032E90D3390039D41B /* Aria */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				36C5D5C22E92148B00928DCE /* Exceptions for "Aria" folder in "Aria" target */,
+			);
 			path = Aria;
 			sourceTree = "<group>";
 		};
@@ -256,7 +269,9 @@
 				DEVELOPMENT_TEAM = C4F2PKS4L7;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Aria/Info.plist;
 				INFOPLIST_KEY_NSCameraUsageDescription = "We need camera access to help you navigate your environment";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "We need your location to provide navigation assistance";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "We need microphone access for voice commands";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -290,7 +305,9 @@
 				DEVELOPMENT_TEAM = C4F2PKS4L7;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Aria/Info.plist;
 				INFOPLIST_KEY_NSCameraUsageDescription = "We need camera access to help you navigate your environment";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "We need your location to provide navigation assistance";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "We need microphone access for voice commands";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
